@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1d2a3a">
+<title>Flavor Finder · Culver's Near You</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,700;9..144,900&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cream:        #f6f1e6;
+    --cream-deep:   #ede5d2;
+    --surface:      #ffffff;
+    --line:         #e3dccb;
+    --ink:          #1d2a3a;
+    --ink-soft:     #5a6573;
+    --ink-mute:     #8b8579;
+    --navy:         #1d2a3a;
+    --blue:         #1f4d7a;
+    --caramel:      #c97a1a;
+    --caramel-soft: #f5e6d0;
+    --warn:         #b23b3b;
+    --radius:       14px;
+    --shadow:       0 1px 0 rgba(29,42,58,.04), 0 8px 24px -12px rgba(29,42,58,.12);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--cream);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* ---------- Header ---------- */
+  header {
+    background: var(--navy);
+    color: var(--cream);
+    padding: 22px 20px 18px;
+    padding-top: calc(22px + env(safe-area-inset-top));
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 0 0 4px;
+  }
+  .brand h1 {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 96;
+    font-weight: 700;
+    font-size: 28px;
+    letter-spacing: -0.01em;
+    margin: 0;
+    line-height: 1;
+  }
+  .brand small {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #9bb1c7;
+  }
+  .tagline {
+    font-size: 13px;
+    color: #b8c5d3;
+    margin: 0;
+  }
+
+  /* ---------- Controls ---------- */
+  .controls {
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    padding: 16px 20px;
+    display: grid;
+    gap: 14px;
+  }
+  .field { display: grid; gap: 6px; }
+  .field label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-soft);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .field label .value {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--blue);
+    font-size: 13px;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    background: var(--cream-deep);
+    border-radius: 4px;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 22px; height: 22px;
+    background: var(--blue);
+    border-radius: 50%;
+    cursor: pointer;
+    border: 3px solid var(--surface);
+    box-shadow: 0 1px 4px rgba(0,0,0,.2);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 22px; height: 22px;
+    background: var(--blue);
+    border-radius: 50%;
+    border: 3px solid var(--surface);
+    cursor: pointer;
+  }
+
+  input[type="text"] {
+    font: inherit;
+    font-size: 15px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--cream);
+    color: var(--ink);
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input[type="text"]:focus {
+    border-color: var(--blue);
+    background: var(--surface);
+  }
+
+  .actions { display: flex; gap: 8px; }
+  button {
+    font: inherit;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  button.primary {
+    background: var(--blue);
+    color: white;
+    border-color: var(--blue);
+    flex: 1;
+  }
+  button.primary:hover { background: #163d61; }
+  button.secondary {
+    background: var(--surface);
+    color: var(--ink);
+    border-color: var(--line);
+  }
+  button.secondary:hover { background: var(--cream-deep); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  details.manual {
+    margin-top: -4px;
+    font-size: 13px;
+  }
+  details.manual summary {
+    cursor: pointer;
+    color: var(--ink-soft);
+    font-weight: 500;
+    list-style: none;
+    padding: 4px 0;
+    user-select: none;
+  }
+  details.manual summary::-webkit-details-marker { display: none; }
+  details.manual summary::before {
+    content: "▸ ";
+    display: inline-block;
+    transition: transform .15s;
+    color: var(--ink-mute);
+  }
+  details.manual[open] summary::before { transform: rotate(90deg); }
+  .manual-body { padding-top: 10px; display: grid; gap: 10px; }
+  .manual-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--cream-deep);
+    color: var(--ink);
+    border: 1px solid transparent;
+  }
+  .chip:hover { background: #e0d6bf; }
+
+  /* ---------- Status ---------- */
+  .status {
+    padding: 10px 20px;
+    font-size: 12px;
+    color: var(--ink-mute);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.02em;
+  }
+  .status .dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--ink-mute);
+    margin-right: 6px;
+    vertical-align: middle;
+    transform: translateY(-1px);
+  }
+  .status.ok .dot { background: #4a9b5e; }
+  .status.err .dot { background: var(--warn); }
+  .status.busy .dot {
+    background: var(--blue);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ---------- Results ---------- */
+  main {
+    padding: 8px 16px 40px;
+    display: grid;
+    gap: 12px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px 0;
+  }
+  .card-head .place {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--ink);
+    margin: 0;
+    flex: 1;
+    min-width: 0;
+  }
+  .card-head .place .addr {
+    display: block;
+    font-weight: 400;
+    color: var(--ink-mute);
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .distance {
+    flex: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--blue);
+    background: #eaf1f8;
+    padding: 4px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .flavor {
+    font-family: 'Fraunces', serif;
+    font-variation-settings: "opsz" 144;
+    font-weight: 700;
+    font-size: 28px;
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    color: var(--blue);
+    padding: 6px 16px 4px;
+    margin: 0;
+  }
+  .flavor.unknown {
+    color: var(--ink-mute);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 18px;
+  }
+
+  /* The good-news state: a favorite-keyword flavor is up today. */
+  .card.match { border-color: var(--caramel); }
+  .card.match .flavor { color: var(--caramel); }
+  .alert {
+    background: var(--caramel-soft);
+    color: var(--caramel);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    padding: 7px 16px;
+    border-bottom: 1px solid #ebd3b0;
+  }
+
+  .week {
+    padding: 6px 16px 14px;
+    display: grid;
+    gap: 4px;
+  }
+  .week-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--ink-soft);
+    align-items: baseline;
+  }
+  .week-row .d {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--ink-mute);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .week-row.fav { color: var(--caramel); font-weight: 600; }
+  .week-row.fav .d { color: var(--caramel); }
+
+  .card.err .flavor {
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 500;
+    color: var(--warn);
+    padding-top: 10px;
+    padding-bottom: 12px;
+  }
+
+  /* ---------- Empty / placeholder ---------- */
+  .empty {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--ink-mute);
+  }
+  .empty h2 {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 22px;
+    color: var(--ink);
+    margin: 0 0 8px;
+  }
+  .empty p { margin: 0; font-size: 14px; }
+
+  /* ---------- Footer note ---------- */
+  .colophon {
+    text-align: center;
+    font-size: 11px;
+    color: var(--ink-mute);
+    padding: 20px;
+  }
+  .colophon a { color: var(--ink-soft); }
+
+  /* Wider screens */
+  @media (min-width: 640px) {
+    body { max-width: 540px; margin: 0 auto; box-shadow: 0 0 60px rgba(0,0,0,.08); min-height: 100vh; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>Flavor Finder</h1>
+    <small>FOTD · NEAR YOU</small>
+  </div>
+  <p class="tagline">Today's frozen custard at Culver's within reach.</p>
+</header>
+
+<section class="controls">
+  <div class="field">
+    <label for="dist">Search radius <span class="value"><span id="distLabel">15</span> miles</span></label>
+    <input type="range" id="dist" min="3" max="25" value="15" step="1">
+  </div>
+  <div class="field">
+    <label for="fav">Flag if today's flavor contains <span class="value" id="favHint">cookie dough</span></label>
+    <input type="text" id="fav" placeholder="cookie dough" value="cookie dough" autocomplete="off" autocapitalize="off">
+  </div>
+  <div class="actions">
+    <button class="primary" id="goBtn">Use my location</button>
+    <button class="secondary" id="refreshBtn" disabled title="Refresh">↻</button>
+  </div>
+  <details class="manual">
+    <summary>Set location manually</summary>
+    <div class="manual-body">
+      <input type="text" id="manualInput" placeholder="44.26, -88.41 — or a saved spot" autocomplete="off">
+      <div class="manual-presets">
+        <button class="chip" data-lat="44.2619" data-lng="-88.4154">Appleton</button>
+        <button class="chip" data-lat="44.1858" data-lng="-88.4626">Neenah</button>
+        <button class="chip" data-lat="44.2780" data-lng="-88.2898">Kaukauna</button>
+      </div>
+    </div>
+  </details>
+</section>
+
+<div class="status" id="status"><span class="dot"></span><span id="statusText">Tap "Use my location" to begin.</span></div>
+
+<main id="results"></main>
+
+<p class="colophon">
+  Reads flavor data straight from culvers.com.<br>
+  Location list is hard-coded — edit the <code>LOCATIONS</code> array in the source to add stores.
+</p>
+
+<script>
+/* ============================================================
+   LOCATIONS — add to this list to expand coverage.
+   Each entry: name, slug (from culvers.com/restaurants/<slug>),
+   address (display only), lat, lng.
+   ============================================================ */
+const LOCATIONS = [
+  { name: "Appleton",       slug: "appleton",                    addr: "N Westhill Blvd",  lat: 44.2900, lng: -88.4670 },
+  { name: "Grand Chute",    slug: "grand-chute-wi-evergreen-dr", addr: "W Evergreen Dr",   lat: 44.2810, lng: -88.4770 },
+  { name: "Darboy",         slug: "darboy",                      addr: "E Calumet St",     lat: 44.2320, lng: -88.3360 },
+  { name: "Little Chute",   slug: "little-chute-wi",             addr: "Freedom Rd",       lat: 44.3000, lng: -88.3020 },
+  { name: "Neenah",         slug: "neenah",                      addr: "Westowne Dr",      lat: 44.1580, lng: -88.4830 },
+];
+
+/* Data source:
+   - If this page is served by flavor_server.py (i.e. http(s)://), we call
+     its /api/flavors endpoint directly — no CORS proxy needed.
+   - If opened as a file:// or hosted on a server that doesn't run the API,
+     we fall back to public CORS proxies. The local API path is preferred
+     because it's faster, cached, and not subject to third-party rate limits.
+*/
+const USE_LOCAL_API = location.protocol === "http:" || location.protocol === "https:";
+const LOCAL_API = "/api/flavors";
+const PROXIES = [
+  (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+  (u) => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+  (u) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
+];
+
+const $ = (id) => document.getElementById(id);
+const distSlider = $("dist");
+const distLabel  = $("distLabel");
+const favInput   = $("fav");
+const favHint    = $("favHint");
+const goBtn      = $("goBtn");
+const refreshBtn = $("refreshBtn");
+const statusEl   = $("status");
+const statusText = $("statusText");
+const results    = $("results");
+
+let userLoc = null;
+
+distSlider.addEventListener("input", () => {
+  distLabel.textContent = distSlider.value;
+  if (userLoc) render();
+});
+favInput.addEventListener("input", () => {
+  favHint.textContent = favInput.value.trim() || "—";
+  if (userLoc) render();
+});
+goBtn.addEventListener("click", locate);
+refreshBtn.addEventListener("click", () => { if (userLoc) loadAndRender(); });
+
+// Manual location: parse "lat, lng" text or use preset chip.
+$("manualInput").addEventListener("change", (e) => {
+  const m = e.target.value.match(/(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)/);
+  if (m) setManualLoc(parseFloat(m[1]), parseFloat(m[3]), "manual coords");
+  else setStatus("Couldn't parse coordinates. Format: 44.26, -88.41", "err");
+});
+document.querySelectorAll(".chip").forEach((b) => {
+  b.addEventListener("click", () => {
+    setManualLoc(parseFloat(b.dataset.lat), parseFloat(b.dataset.lng), b.textContent);
+  });
+});
+
+function setManualLoc(lat, lng, label) {
+  userLoc = { lat, lng };
+  goBtn.textContent = "Update location";
+  refreshBtn.disabled = false;
+  setStatus(`Using ${label} as your location.`, "ok");
+  loadAndRender();
+}
+
+function setStatus(text, kind) {
+  statusText.textContent = text;
+  statusEl.className = "status" + (kind ? " " + kind : "");
+}
+
+function locate() {
+  if (!navigator.geolocation) {
+    setStatus("Geolocation isn't available — use 'Set location manually' below.", "err");
+    return;
+  }
+  setStatus("Asking your browser for location…", "busy");
+  goBtn.disabled = true;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      userLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      goBtn.textContent = "Update location";
+      goBtn.disabled = false;
+      refreshBtn.disabled = false;
+      loadAndRender();
+    },
+    (err) => {
+      goBtn.disabled = false;
+      const policyBlocked = /permissions policy|disabled/i.test(err.message);
+      const note = policyBlocked
+        ? "Geolocation is blocked here. Open 'Set location manually' below, or open the page in a real browser tab."
+        : "Location denied or unavailable: " + err.message + ". Try the manual option below.";
+      setStatus(note, "err");
+    },
+    { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+  );
+}
+
+/* Haversine — miles. */
+function distanceMiles(a, b) {
+  const R = 3958.8;
+  const toRad = (d) => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat), lat2 = toRad(b.lat);
+  const h = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/* Try each proxy in order. */
+async function fetchPage(url) {
+  let lastErr;
+  for (const wrap of PROXIES) {
+    try {
+      const r = await fetch(wrap(url), { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.text();
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+
+/* Cheap HTML entity decoder. */
+const decoder = document.createElement("textarea");
+function unescapeHtml(s) {
+  decoder.innerHTML = s;
+  return decoder.value;
+}
+
+/* Parse iCalendar payloads from a Culver's restaurant page.
+   Returns Map of yyyy-mm-dd -> flavor. */
+function parseFlavors(html) {
+  const out = new Map();
+  const re = /data:text\/calendar[^"'\)\s]+/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    let ics;
+    try { ics = decodeURIComponent(m[0]); } catch { continue; }
+    const d = /DTSTART[^:]*:(\d{8})/.exec(ics);
+    const f = /SUMMARY:([^\r\n\\]+)/.exec(ics);
+    if (d && f) {
+      const iso = d[1].slice(0,4) + "-" + d[1].slice(4,6) + "-" + d[1].slice(6,8);
+      out.set(iso, unescapeHtml(f[1].trim()));
+    }
+  }
+  return out;
+}
+
+function todayIso() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+}
+function dayLabel(iso) {
+  const [y,m,d] = iso.split("-").map(Number);
+  const dt = new Date(y, m-1, d);
+  return dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+let cache = {};   // slug -> {flavors: Map<iso, name>, error}
+
+async function loadAndRender() {
+  setStatus("Fetching today's flavors…", "busy");
+  cache = {};
+
+  if (USE_LOCAL_API) {
+    // Single API call to the local server — fast, no third-party proxy.
+    try {
+      const r = await fetch(LOCAL_API, { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      for (const loc of data.locations) {
+        const m = new Map();
+        if (loc.today) {
+          m.set(todayIso(), loc.today);
+        }
+        for (const w of (loc.week || [])) m.set(w.date, w.flavor);
+        cache[loc.slug] = { flavors: m, error: loc.error || null };
+      }
+      const succeeded = Object.values(cache).filter(d => !d.error).length;
+      if (succeeded === 0) {
+        setStatus("Local server reachable, but no locations could be fetched. Check the server console for errors.", "err");
+      } else {
+        const t = new Date(data.fetched_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+        const partial = succeeded < data.locations.length ? ` (${succeeded}/${data.locations.length} reachable)` : "";
+        setStatus(`Updated ${t}${partial}`, "ok");
+      }
+      render();
+      return;
+    } catch (e) {
+      // Local API not present (e.g. hosted on GitHub Pages with no backend).
+      // Fall through to proxies silently; keep the "Fetching…" spinner.
+      cache = {};
+    }
+  }
+
+  // Proxy fallback: fetch each restaurant page, staggered by 250ms so we
+  // don't hit free CORS proxies with five simultaneous requests (which gets
+  // some throttled to HTTP 400 under load).
+  const jobs = LOCATIONS.map(async (loc, i) => {
+    if (i > 0) await new Promise((r) => setTimeout(r, i * 250));
+    try {
+      const html = await fetchPage(`https://www.culvers.com/restaurants/${loc.slug}`);
+      cache[loc.slug] = { flavors: parseFlavors(html), error: null };
+    } catch (e) {
+      cache[loc.slug] = { flavors: new Map(), error: e.message || String(e) };
+    }
+  });
+  await Promise.all(jobs);
+
+  const succeeded = Object.values(cache).filter((d) => !d.error).length;
+  if (succeeded === 0) {
+    setStatus(
+      "Couldn't reach culvers.com through any proxy. " +
+      "Run flavor_server.py locally for a reliable connection — see the README in the chat.",
+      "err"
+    );
+    render();
+    return;
+  }
+  const now = new Date();
+  const t = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const partial = succeeded < LOCATIONS.length ? ` (${succeeded}/${LOCATIONS.length} reachable)` : "";
+  setStatus(`Updated ${t}${partial}`, "ok");
+  render();
+}
+
+function render() {
+  if (!userLoc) return;
+  const maxMi = +distSlider.value;
+  const fav = favInput.value.trim().toLowerCase();
+  const today = todayIso();
+
+  // Compute distances, filter, sort.
+  const rows = LOCATIONS
+    .map((loc) => ({ ...loc, miles: distanceMiles(userLoc, loc) }))
+    .filter((r) => r.miles <= maxMi)
+    .sort((a, b) => a.miles - b.miles);
+
+  results.innerHTML = "";
+
+  if (rows.length === 0) {
+    const div = document.createElement("div");
+    div.className = "empty";
+    div.innerHTML = `<h2>Nothing within ${maxMi} miles</h2><p>Try widening the radius, or add more locations to the source.</p>`;
+    results.appendChild(div);
+    return;
+  }
+
+  for (const r of rows) {
+    const data = cache[r.slug] || {};
+    const flavors = data.flavors || new Map();
+    const todayFlavor = flavors.get(today);
+    const upcoming = [...flavors.entries()]
+      .filter(([iso]) => iso > today)
+      .sort()
+      .slice(0, 6);
+
+    const card = document.createElement("article");
+    card.className = "card";
+
+    let alertHtml = "";
+    const isMatch = fav && todayFlavor && todayFlavor.toLowerCase().includes(fav);
+    if (isMatch) {
+      card.classList.add("match");
+      alertHtml = `<div class="alert">★ ${escapeHtml(fav)} is on today</div>`;
+    }
+
+    if (data.error) {
+      card.classList.add("err");
+    }
+
+    const flavorHtml = data.error
+      ? `<p class="flavor">⚠ ${escapeHtml(data.error)}</p>`
+      : todayFlavor
+        ? `<p class="flavor">${escapeHtml(todayFlavor)}</p>`
+        : `<p class="flavor unknown">No flavor listed for today.</p>`;
+
+    let weekHtml = "";
+    if (upcoming.length) {
+      weekHtml = `<div class="week">` + upcoming.map(([iso, name]) => {
+        const matchClass = fav && name.toLowerCase().includes(fav) ? " fav" : "";
+        return `<div class="week-row${matchClass}"><span class="d">${dayLabel(iso)}</span><span>${escapeHtml(name)}</span></div>`;
+      }).join("") + `</div>`;
+    }
+
+    card.innerHTML = `
+      ${alertHtml}
+      <div class="card-head">
+        <p class="place">${escapeHtml(r.name)}<span class="addr">${escapeHtml(r.addr)}</span></p>
+        <span class="distance">${r.miles.toFixed(1)} mi</span>
+      </div>
+      ${flavorHtml}
+      ${weekHtml}
+    `;
+    results.appendChild(card);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Set initial label.
+distLabel.textContent = distSlider.value;
+favHint.textContent = favInput.value;
+</script>
+</body>
+</html>
