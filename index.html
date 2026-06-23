@@ -191,16 +191,6 @@
   }
   details.manual[open] summary::before { transform: rotate(90deg); }
   .manual-body { padding-top: 10px; display: grid; gap: 10px; }
-  .manual-presets { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip {
-    font-size: 12px;
-    padding: 6px 12px;
-    border-radius: 999px;
-    background: var(--cream-deep);
-    color: var(--ink);
-    border: 1px solid transparent;
-  }
-  .chip:hover { background: #e0d6bf; }
 
   /* ---------- Status ---------- */
   .status {
@@ -399,12 +389,7 @@
   <details class="manual">
     <summary>Set location manually</summary>
     <div class="manual-body">
-      <input type="text" id="manualInput" placeholder="44.26, -88.41 — or a saved spot" autocomplete="off">
-      <div class="manual-presets">
-        <button class="chip" data-lat="44.2619" data-lng="-88.4154">Appleton</button>
-        <button class="chip" data-lat="44.1858" data-lng="-88.4626">Neenah</button>
-        <button class="chip" data-lat="44.2780" data-lng="-88.2898">Kaukauna</button>
-      </div>
+      <input type="text" id="manualInput" placeholder="ZIP code (e.g. 54915)" autocomplete="postal-code" inputmode="numeric">
     </div>
   </details>
 </section>
@@ -471,17 +456,42 @@ favInput.addEventListener("input", () => {
 goBtn.addEventListener("click", locate);
 refreshBtn.addEventListener("click", () => { if (userLoc) loadAndRender(); });
 
-// Manual location: parse "lat, lng" text or use preset chip.
+// Manual location entry: accepts a 5-digit ZIP (geocoded via zippopotam.us)
+// or raw "lat, lng" coordinates as a power-user fallback.
 $("manualInput").addEventListener("change", (e) => {
-  const m = e.target.value.match(/(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)/);
-  if (m) setManualLoc(parseFloat(m[1]), parseFloat(m[3]), "manual coords");
-  else setStatus("Couldn't parse coordinates. Format: 44.26, -88.41", "err");
+  resolveManual(e.target.value);
 });
-document.querySelectorAll(".chip").forEach((b) => {
-  b.addEventListener("click", () => {
-    setManualLoc(parseFloat(b.dataset.lat), parseFloat(b.dataset.lng), b.textContent);
-  });
-});
+
+async function resolveManual(raw) {
+  const v = String(raw).trim();
+  if (!v) return;
+
+  // 5-digit US ZIP code: look it up.
+  if (/^\d{5}$/.test(v)) {
+    try {
+      setStatus(`Looking up ZIP ${v}…`, "busy");
+      const r = await fetch(`https://api.zippopotam.us/us/${v}`);
+      if (!r.ok) throw new Error(r.status === 404 ? "not a valid ZIP" : "HTTP " + r.status);
+      const data = await r.json();
+      const p = data.places && data.places[0];
+      if (!p) throw new Error("no location data");
+      const label = `${p["place name"]}, ${p["state abbreviation"]} ${v}`;
+      setManualLoc(parseFloat(p.latitude), parseFloat(p.longitude), label);
+    } catch (e) {
+      setStatus(`Couldn't look up ZIP ${v}: ${e.message}`, "err");
+    }
+    return;
+  }
+
+  // "lat, lng" fallback.
+  const m = v.match(/(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)/);
+  if (m) {
+    setManualLoc(parseFloat(m[1]), parseFloat(m[3]), "manual coords");
+    return;
+  }
+
+  setStatus("Enter a 5-digit ZIP code (or 'lat, lng' coordinates).", "err");
+}
 
 function setManualLoc(lat, lng, label) {
   userLoc = { lat, lng };
