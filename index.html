@@ -389,7 +389,7 @@
   <details class="manual">
     <summary>Set location manually</summary>
     <div class="manual-body">
-      <input type="text" id="manualInput" placeholder="ZIP code (e.g. 53583)" autocomplete="postal-code" inputmode="numeric">
+      <input type="text" id="manualInput" placeholder="ZIP code (e.g. 54915)" autocomplete="postal-code" inputmode="numeric">
     </div>
   </details>
 </section>
@@ -400,22 +400,18 @@
 
 <p class="colophon">
   Reads flavor data straight from culvers.com.<br>
-  Location list is hard-coded — edit the <code>LOCATIONS</code> array in the source to add stores.
+  Location list generated from culvers.com sitemap.
 </p>
 
 <script>
 /* ============================================================
-   LOCATIONS — add to this list to expand coverage.
-   Each entry: name, slug (from culvers.com/restaurants/<slug>),
-   address (display only), lat, lng.
+   Location data — loaded from locations.json at startup.
+   Generate the file by running build_locations.py once (~1000
+   stores, ~15 min). Then commit locations.json alongside this
+   file so GitHub Pages serves both from the same origin.
    ============================================================ */
-const LOCATIONS = [
-  { name: "Appleton",       slug: "appleton",                    addr: "N Westhill Blvd",  lat: 44.2900, lng: -88.4670 },
-  { name: "Grand Chute",    slug: "grand-chute-wi-evergreen-dr", addr: "W Evergreen Dr",   lat: 44.2810, lng: -88.4770 },
-  { name: "Darboy",         slug: "darboy",                      addr: "E Calumet St",     lat: 44.2320, lng: -88.3360 },
-  { name: "Little Chute",   slug: "little-chute-wi",             addr: "Freedom Rd",       lat: 44.3000, lng: -88.3020 },
-  { name: "Neenah",         slug: "neenah",                      addr: "Westowne Dr",      lat: 44.1580, lng: -88.4830 },
-];
+let LOCATIONS = [];
+const MAX_FLAVOR_FETCHES = 10;  // most stores we'll fetch flavors for at once
 
 /* Data source:
    - If this page is served by flavor_server.py (i.e. http(s)://), we call
@@ -631,10 +627,18 @@ async function loadAndRender() {
     }
   }
 
-  // Proxy fallback: fetch each restaurant page, staggered by 250ms so we
-  // don't hit free CORS proxies with five simultaneous requests (which gets
-  // some throttled to HTTP 400 under load).
-  const jobs = LOCATIONS.map(async (loc, i) => {
+  // Proxy fallback: only fetch flavors for the closest N stores in the
+  // current radius. Fetching every store in the list would take forever
+  // (and rate-limit the free proxies) once the list has 1000 entries.
+  const maxMi = +distSlider.value;
+  const targets = userLoc
+    ? LOCATIONS
+        .map((loc) => ({ ...loc, miles: distanceMiles(userLoc, loc) }))
+        .filter((r) => r.miles <= maxMi)
+        .sort((a, b) => a.miles - b.miles)
+        .slice(0, MAX_FLAVOR_FETCHES)
+    : [];
+  const jobs = targets.map(async (loc, i) => {
     if (i > 0) await new Promise((r) => setTimeout(r, i * 250));
     try {
       const html = await fetchPage(`https://www.culvers.com/restaurants/${loc.slug}`);
@@ -646,10 +650,15 @@ async function loadAndRender() {
   await Promise.all(jobs);
 
   const succeeded = Object.values(cache).filter((d) => !d.error).length;
+  if (targets.length === 0) {
+    // No stores in range — render() will show the empty state.
+    setStatus("Ready.", "");
+    render();
+    return;
+  }
   if (succeeded === 0) {
     setStatus(
-      "Couldn't reach culvers.com through any proxy. " +
-      "Run flavor_server.py locally for a reliable connection — see the README in the chat.",
+      "Couldn't reach culvers.com through any proxy. Try again in a minute.",
       "err"
     );
     render();
@@ -657,7 +666,7 @@ async function loadAndRender() {
   }
   const now = new Date();
   const t = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  const partial = succeeded < LOCATIONS.length ? ` (${succeeded}/${LOCATIONS.length} reachable)` : "";
+  const partial = succeeded < targets.length ? ` (${succeeded}/${targets.length} reachable)` : "";
   setStatus(`Updated ${t}${partial}`, "ok");
   render();
 }
@@ -668,18 +677,22 @@ function render() {
   const fav = favInput.value.trim().toLowerCase();
   const today = todayIso();
 
-  // Compute distances, filter, sort.
-  const rows = LOCATIONS
+  // Compute distances, filter to radius, sort nearest first, and cap the
+  // number of stores we'll actually fetch flavors for. Anything beyond the
+  // cap is shown in a small "and N more nearby" line below the cards.
+  const inRange = LOCATIONS
     .map((loc) => ({ ...loc, miles: distanceMiles(userLoc, loc) }))
     .filter((r) => r.miles <= maxMi)
     .sort((a, b) => a.miles - b.miles);
+  const rows = inRange.slice(0, MAX_FLAVOR_FETCHES);
+  const extras = inRange.slice(MAX_FLAVOR_FETCHES);
 
   results.innerHTML = "";
 
   if (rows.length === 0) {
     const div = document.createElement("div");
     div.className = "empty";
-    div.innerHTML = `<h2>Nothing within ${maxMi} miles</h2><p>Try widening the radius, or add more locations to the source.</p>`;
+    div.innerHTML = `<h2>Nothing within ${maxMi} miles</h2><p>Try widening the radius.</p>`;
     results.appendChild(div);
     return;
   }
@@ -721,16 +734,28 @@ function render() {
       }).join("") + `</div>`;
     }
 
+    const placeHeader = escapeHtml(r.city) + (r.state ? ", " + escapeHtml(r.state) : "");
+    const addrHtml = r.addr ? `<span class="addr">${escapeHtml(r.addr)}</span>` : "";
+
     card.innerHTML = `
       ${alertHtml}
       <div class="card-head">
-        <p class="place">${escapeHtml(r.name)}<span class="addr">${escapeHtml(r.addr)}</span></p>
+        <p class="place">${placeHeader}${addrHtml}</p>
         <span class="distance">${r.miles.toFixed(1)} mi</span>
       </div>
       ${flavorHtml}
       ${weekHtml}
     `;
     results.appendChild(card);
+  }
+
+  // Note additional stores that were in-range but past the fetch cap.
+  if (extras.length) {
+    const div = document.createElement("div");
+    div.className = "empty";
+    div.style.padding = "16px 24px 8px";
+    div.innerHTML = `<p style="font-size:12px">…and ${extras.length} more within ${maxMi} miles. Narrow the radius to see them.</p>`;
+    results.appendChild(div);
   }
 }
 
@@ -746,6 +771,23 @@ function escapeHtml(s) {
 // Set initial label.
 distLabel.textContent = distSlider.value;
 favHint.textContent = favInput.value;
+
+// Load the location list. Once it's ready, the "Use my location" button
+// works normally. If it fails, tell the user what to do.
+(async function loadLocationList() {
+  setStatus("Loading location list…", "busy");
+  goBtn.disabled = true;
+  try {
+    const r = await fetch("locations.json", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    LOCATIONS = await r.json();
+    setStatus(`Ready — ${LOCATIONS.length.toLocaleString()} locations loaded. Tap "Use my location" or set one manually.`, "");
+  } catch (e) {
+    setStatus("Couldn't load locations.json — the file needs to be deployed alongside this page.", "err");
+  } finally {
+    goBtn.disabled = false;
+  }
+})();
 </script>
 </body>
 </html>
