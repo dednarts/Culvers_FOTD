@@ -557,8 +557,7 @@ async function fetchPage(url) {
   throw lastErr;
 }
 
-/* The slug a returned page claims to be (canonical / og:url). Used to detect
-   when a proxy/CDN hands us the wrong store's page. */
+/* The slug a returned page claims to be (canonical / og:url). */
 function pageSlug(html) {
   const pats = [
     /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i,
@@ -574,21 +573,59 @@ function pageSlug(html) {
   return null;
 }
 
-/* Fetch a store's page and confirm it's really that store, retrying a few
-   times if the CDN serves a mismatched (cached) page. */
-async function fetchStorePage(slug) {
+/* The city/state embedded IN the flavor data itself. Each calendar entry
+   carries LOCATION:undefined, <City>, <ST> <ZIP>. This travels with the
+   flavors, so it's the most reliable signal that the flavors we parsed
+   actually belong to the store we asked for — a stripped canonical tag
+   can't fool it. Returns e.g. "darboy, wi" (lowercased) or null. */
+function flavorDataCity(html) {
+  const re = /data:text\/calendar[^"'\)\s]+/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    let ics;
+    try { ics = decodeURIComponent(m[0]); } catch { continue; }
+    const lm = /LOCATION:[^,\n]*,\s*([A-Za-z.'\- ]{2,40}),\s*([A-Z]{2})/.exec(ics);
+    if (lm) return (lm[1].trim() + ", " + lm[2]).toLowerCase();
+  }
+  return null;
+}
+
+/* Fetch a store's page and confirm the FLAVOR DATA belongs to that store,
+   retrying if the CDN/proxy serves a cached page for a different location.
+   Verification order: the LOCATION city inside the flavor data (strongest),
+   then the page's canonical slug. Pass the expected city from locations.json. */
+async function fetchStorePage(slug, expectCity, expectState) {
   const url = `https://www.culvers.com/restaurants/${slug}`;
+  const want = expectCity ? (expectCity + ", " + (expectState || "")).trim().toLowerCase() : null;
   let lastErr;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const html = await fetchPage(url);
-      const got = pageSlug(html);
-      if (got === null || got === slug) return html;
-      lastErr = new Error(`wrong store (${got})`);
+      const dataCity = flavorDataCity(html);   // city inside the flavor data
+      const slugGot = pageSlug(html);          // canonical/og:url slug
+
+      // Accept if EITHER strong signal confirms the store:
+      //  - the flavor data's own city matches what we expected, or
+      //  - the page's canonical slug matches the slug we requested.
+      const cityOk = want && dataCity && dataCity === want;
+      const slugOk = slugGot && slugGot === slug;
+      if (cityOk || slugOk) return html;
+
+      // Accept if we simply have nothing to check against (avoid false
+      // rejects when both signals are absent — better a maybe-stale page
+      // than a blank card).
+      if (!dataCity && !slugGot) return html;
+      if (!want && slugGot === null) return html;
+
+      // Otherwise at least one signal says "different store" and nothing
+      // confirms it — treat as a cache mismatch and retry.
+      lastErr = new Error(
+        "wrong store" + (dataCity ? ` (got ${dataCity})` : slugGot ? ` (got ${slugGot})` : "")
+      );
     } catch (e) {
       lastErr = e;
     }
-    await new Promise((r) => setTimeout(r, 300 * (attempt + 1) + Math.random() * 300));
+    await new Promise((r) => setTimeout(r, 350 * (attempt + 1) + Math.random() * 400));
   }
   throw lastErr || new Error("fetch failed");
 }
@@ -681,7 +718,7 @@ async function loadAndRender() {
   const jobs = targets.map(async (loc, i) => {
     if (i > 0) await new Promise((r) => setTimeout(r, i * 250));
     try {
-      const html = await fetchStorePage(loc.slug);
+      const html = await fetchStorePage(loc.slug, loc.city, loc.state);
       cache[loc.slug] = { flavors: parseFlavors(html), error: null };
     } catch (e) {
       cache[loc.slug] = { flavors: new Map(), error: e.message || String(e) };
