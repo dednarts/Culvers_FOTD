@@ -540,17 +540,57 @@ function distanceMiles(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-/* Try each proxy in order. */
+/* Try each proxy in order, adding a cache-buster so the proxy/CDN can't hand
+   back a copy of a different store's page. Returns the page HTML. */
 async function fetchPage(url) {
   let lastErr;
   for (const wrap of PROXIES) {
     try {
-      const r = await fetch(wrap(url), { cache: "no-store" });
+      // Unique query param per request defeats path-based caching that was
+      // causing different stores to return the same (wrong) flavors.
+      const bust = (url.includes("?") ? "&" : "?") + "_cb=" + Date.now() + "_" + Math.random().toString(36).slice(2);
+      const r = await fetch(wrap(url + bust), { cache: "no-store" });
       if (!r.ok) throw new Error("HTTP " + r.status);
       return await r.text();
     } catch (e) { lastErr = e; }
   }
   throw lastErr;
+}
+
+/* The slug a returned page claims to be (canonical / og:url). Used to detect
+   when a proxy/CDN hands us the wrong store's page. */
+function pageSlug(html) {
+  const pats = [
+    /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i,
+    /<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i,
+  ];
+  for (const p of pats) {
+    const m = p.exec(html);
+    if (m) {
+      const sm = /\/restaurants\/([^/?#"]+)/.exec(m[1]);
+      if (sm) return sm[1].replace(/\/$/, "");
+    }
+  }
+  return null;
+}
+
+/* Fetch a store's page and confirm it's really that store, retrying a few
+   times if the CDN serves a mismatched (cached) page. */
+async function fetchStorePage(slug) {
+  const url = `https://www.culvers.com/restaurants/${slug}`;
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const html = await fetchPage(url);
+      const got = pageSlug(html);
+      if (got === null || got === slug) return html;
+      lastErr = new Error(`wrong store (${got})`);
+    } catch (e) {
+      lastErr = e;
+    }
+    await new Promise((r) => setTimeout(r, 300 * (attempt + 1) + Math.random() * 300));
+  }
+  throw lastErr || new Error("fetch failed");
 }
 
 /* Cheap HTML entity decoder. */
@@ -641,7 +681,7 @@ async function loadAndRender() {
   const jobs = targets.map(async (loc, i) => {
     if (i > 0) await new Promise((r) => setTimeout(r, i * 250));
     try {
-      const html = await fetchPage(`https://www.culvers.com/restaurants/${loc.slug}`);
+      const html = await fetchStorePage(loc.slug);
       cache[loc.slug] = { flavors: parseFlavors(html), error: null };
     } catch (e) {
       cache[loc.slug] = { flavors: new Map(), error: e.message || String(e) };
