@@ -455,6 +455,11 @@ favInput.addEventListener("input", () => {
 goBtn.addEventListener("click", locate);
 refreshBtn.addEventListener("click", () => { if (userLoc) fetchAndRender(); });
 
+function setStatus(text, kind) {
+  statusText.textContent = text;
+  statusEl.className = "status" + (kind ? " " + kind : "");
+}
+
 // Manual location entry: 5-digit ZIP (geocoded) or raw "lat, lng".
 $("manualInput").addEventListener("change", (e) => resolveManual(e.target.value));
 
