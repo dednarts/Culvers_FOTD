@@ -323,6 +323,32 @@
   .week-row.fav { color: var(--caramel); font-weight: 600; }
   .week-row.fav .d { color: var(--caramel); }
 
+  /* Tap-to-expand affordance */
+  .card { cursor: pointer; transition: border-color .15s; }
+  .card:hover { border-color: #d8cfba; }
+  .week-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 16px 12px;
+    font-size: 11px;
+    color: var(--ink-mute);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.04em;
+    user-select: none;
+  }
+  .week-toggle .chev {
+    transition: transform .18s;
+    display: inline-block;
+  }
+  .card.open .week-toggle .chev { transform: rotate(90deg); }
+  .week-loading {
+    padding: 2px 16px 12px;
+    font-size: 12px;
+    color: var(--ink-mute);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
   .card.err .flavor {
     font-family: 'Inter', sans-serif;
     font-size: 14px;
@@ -540,6 +566,107 @@ async function proxiedJson(url) {
   throw lastErr;
 }
 
+// Fetch raw page text through the proxies (for the per-store calendar).
+async function proxiedText(url) {
+  let lastErr;
+  for (const wrap of PROXIES) {
+    try {
+      const bust = (url.includes("?") ? "&" : "?") + "_cb=" + Date.now() + "_" + Math.random().toString(36).slice(2);
+      const r = await fetch(wrap(url + bust), { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.text();
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+
+// ---- Week-ahead forecast (fetched on tap, one store at a time) ----
+const weekCache = {};   // slug -> [{date, flavor}] | "error"
+
+function todayIso() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+}
+function dayLabel(iso) {
+  const [y,m,d] = iso.split("-").map(Number);
+  return new Date(y, m-1, d).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+/* Fetch one store's calendar from its page's __NEXT_DATA__ blob, verifying
+   the page's own slug matches what we asked for (guards against a proxy
+   handing back a different store's cached page). Returns upcoming days only. */
+async function fetchWeek(slug) {
+  if (weekCache[slug] && weekCache[slug] !== "error") return weekCache[slug];
+  const url = `https://www.culvers.com/restaurants/${slug}`;
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const html = await proxiedText(url);
+      const m = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+      if (!m) throw new Error("no data");
+      const nd = JSON.parse(m[1]);
+      const cd = nd?.props?.pageProps?.page?.customData;
+      const gotSlug = cd?.restaurantCalendar?.restaurant?.slug || cd?.restaurantDetails?.urlSlug || nd?.query?.slug;
+      if (gotSlug && gotSlug !== slug) { lastErr = new Error("wrong store"); }
+      else {
+        const cal = cd?.restaurantCalendar?.flavors;
+        const today = todayIso();
+        const out = [];
+        if (Array.isArray(cal)) {
+          for (const f of cal) {
+            if (f?.onDate && f?.title) {
+              const iso = f.onDate.slice(0, 10);
+              if (iso > today) out.push({ date: iso, flavor: f.title });
+            }
+          }
+        }
+        out.sort((a, b) => a.date.localeCompare(b.date));
+        weekCache[slug] = out;
+        return out;
+      }
+    } catch (e) { lastErr = e; }
+    await new Promise((r) => setTimeout(r, 300 * (attempt + 1) + Math.random() * 300));
+  }
+  throw lastErr || new Error("fetch failed");
+}
+
+// Toggle a card's week-ahead panel; fetch on first open.
+async function toggleWeek(card, store) {
+  const existing = card.querySelector(".week, .week-loading");
+  if (card.classList.contains("open")) {
+    card.classList.remove("open");
+    if (existing) existing.remove();
+    return;
+  }
+  card.classList.add("open");
+  const fav = favInput.value.trim().toLowerCase();
+
+  const loading = document.createElement("div");
+  loading.className = "week-loading";
+  loading.textContent = "Loading the week…";
+  card.appendChild(loading);
+
+  try {
+    const week = await fetchWeek(store.slug);
+    loading.remove();
+    if (!card.classList.contains("open")) return;  // user closed it meanwhile
+    const div = document.createElement("div");
+    div.className = "week";
+    if (week.length === 0) {
+      div.innerHTML = `<div class="week-row"><span>No upcoming flavors listed.</span></div>`;
+    } else {
+      div.innerHTML = week.map(({ date, flavor }) => {
+        const fv = fav && flavor.toLowerCase().includes(fav) ? " fav" : "";
+        return `<div class="week-row${fv}"><span class="d">${dayLabel(date)}</span><span>${escapeHtml(flavor)}</span></div>`;
+      }).join("");
+    }
+    card.appendChild(div);
+  } catch (e) {
+    loading.textContent = "Couldn't load the week — tap to retry.";
+  }
+}
+
 // Query the locator for stores near userLoc within the current radius.
 async function fetchAndRender() {
   if (!userLoc) return;
@@ -620,7 +747,11 @@ function render() {
         <span class="distance">${r.miles.toFixed(1)} mi</span>
       </div>
       ${flavorHtml}
+      ${r.closed ? "" : `<div class="week-toggle"><span class="chev">▸</span> tap for the week ahead</div>`}
     `;
+    if (!r.closed) {
+      card.addEventListener("click", () => toggleWeek(card, r));
+    }
     results.appendChild(card);
   }
 }
