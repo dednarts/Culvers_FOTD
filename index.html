@@ -441,13 +441,21 @@ const results    = $("results");
 
 let userLoc = null;
 
+// A debounce timer for radius changes. Dragging the slider re-renders
+// instantly from cache, then fetches any newly in-range stores once the
+// slider settles (so widening the radius fills in their flavors instead of
+// leaving them stuck on "No flavor listed for today").
+let radiusFetchTimer = null;
 distSlider.addEventListener("input", () => {
   distLabel.textContent = distSlider.value;
-  if (userLoc) render();
+  if (!userLoc) return;
+  render();  // immediate visual feedback
+  clearTimeout(radiusFetchTimer);
+  radiusFetchTimer = setTimeout(() => loadAndRender(), 400);
 });
 favInput.addEventListener("input", () => {
   favHint.textContent = favInput.value.trim() || "—";
-  if (userLoc) render();
+  if (userLoc) render();  // keyword only re-highlights cached data; no fetch needed
 });
 goBtn.addEventListener("click", locate);
 refreshBtn.addEventListener("click", () => { if (userLoc) loadAndRender(); });
@@ -637,11 +645,11 @@ let cache = {};   // slug -> {flavors: Map<iso, name>, error}
 
 async function loadAndRender() {
   setStatus("Fetching today's flavors…", "busy");
-  cache = {};
 
   if (USE_LOCAL_API) {
     // Single API call to the local server — fast, no third-party proxy.
     try {
+      cache = {};
       const r = await fetch(LOCAL_API, { cache: "no-store" });
       if (!r.ok) throw new Error("HTTP " + r.status);
       const data = await r.json();
@@ -666,21 +674,23 @@ async function loadAndRender() {
     } catch (e) {
       // Local API not present (e.g. hosted on GitHub Pages with no backend).
       // Fall through to proxies silently; keep the "Fetching…" spinner.
-      cache = {};
     }
   }
 
-  // Proxy fallback: only fetch flavors for the closest N stores in the
-  // current radius. Fetching every store in the list would take forever
-  // (and rate-limit the free proxies) once the list has 1000 entries.
+  // Proxy fallback: fetch flavors for the closest N stores in the current
+  // radius. We KEEP the existing cache (so widening the radius doesn't
+  // re-fetch stores we already have) and only fetch the in-range stores
+  // that aren't cached yet, up to the cap.
   const maxMi = +distSlider.value;
-  const targets = userLoc
+  const inRange = userLoc
     ? LOCATIONS
         .map((loc) => ({ ...loc, miles: distanceMiles(userLoc, loc) }))
         .filter((r) => r.miles <= maxMi)
         .sort((a, b) => a.miles - b.miles)
         .slice(0, MAX_FLAVOR_FETCHES)
     : [];
+  const targets = inRange.filter((loc) => !cache[loc.slug] || cache[loc.slug].error);
+
   const jobs = targets.map(async (loc, i) => {
     if (i > 0) await new Promise((r) => setTimeout(r, i * 250));
     try {
@@ -692,14 +702,15 @@ async function loadAndRender() {
   });
   await Promise.all(jobs);
 
-  const succeeded = Object.values(cache).filter((d) => !d.error).length;
-  if (targets.length === 0) {
+  // Count successes among the stores actually shown (the in-range set).
+  const shownOk = inRange.filter((loc) => cache[loc.slug] && !cache[loc.slug].error).length;
+  if (inRange.length === 0) {
     // No stores in range — render() will show the empty state.
     setStatus("Ready.", "");
     render();
     return;
   }
-  if (succeeded === 0) {
+  if (shownOk === 0) {
     setStatus(
       "Couldn't reach culvers.com through any proxy. Try again in a minute.",
       "err"
@@ -709,7 +720,7 @@ async function loadAndRender() {
   }
   const now = new Date();
   const t = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  const partial = succeeded < targets.length ? ` (${succeeded}/${targets.length} reachable)` : "";
+  const partial = shownOk < inRange.length ? ` (${shownOk}/${inRange.length} reachable)` : "";
   setStatus(`Updated ${t}${partial}`, "ok");
   render();
 }
