@@ -622,8 +622,9 @@ async function fetchWeek(slug) {
           }
         }
         out.sort((a, b) => a.date.localeCompare(b.date));
-        weekCache[slug] = out;
-        return out;
+        const next7 = out.slice(0, 7);
+        weekCache[slug] = next7;
+        return next7;
       }
     } catch (e) { lastErr = e; }
     await new Promise((r) => setTimeout(r, 300 * (attempt + 1) + Math.random() * 300));
@@ -747,7 +748,7 @@ function render() {
         <span class="distance">${r.miles.toFixed(1)} mi</span>
       </div>
       ${flavorHtml}
-      ${r.closed ? "" : `<div class="week-toggle"><span class="chev">▸</span> tap for the week ahead</div>`}
+      ${r.closed ? "" : `<div class="week-toggle"><span class="chev">▸</span> tap for the next 7 days</div>`}
     `;
     if (!r.closed) {
       card.addEventListener("click", () => toggleWeek(card, r));
