@@ -546,8 +546,6 @@ async function fetchPage(url) {
   let lastErr;
   for (const wrap of PROXIES) {
     try {
-      // Unique query param per request defeats path-based caching that was
-      // causing different stores to return the same (wrong) flavors.
       const bust = (url.includes("?") ? "&" : "?") + "_cb=" + Date.now() + "_" + Math.random().toString(36).slice(2);
       const r = await fetch(wrap(url + bust), { cache: "no-store" });
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -557,103 +555,71 @@ async function fetchPage(url) {
   throw lastErr;
 }
 
-/* The slug a returned page claims to be (canonical / og:url). */
-function pageSlug(html) {
-  const pats = [
-    /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i,
-    /<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i,
-  ];
-  for (const p of pats) {
-    const m = p.exec(html);
-    if (m) {
-      const sm = /\/restaurants\/([^/?#"]+)/.exec(m[1]);
-      if (sm) return sm[1].replace(/\/$/, "");
+/* Extract the __NEXT_DATA__ JSON blob the site embeds on every restaurant
+   page. It carries the store's own slug plus a full month of flavors keyed
+   by date — a far cleaner source than scraping the calendar HTML. */
+function parseNextData(html) {
+  const m = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+  if (!m) return null;
+  try { return JSON.parse(m[1]); } catch { return null; }
+}
+
+/* Pull what we need out of the parsed __NEXT_DATA__:
+   - slug: the store's OWN url slug (used to verify we got the right page)
+   - flavors: Map of yyyy-mm-dd -> flavor name (today + the coming weeks) */
+function extractStore(nextData) {
+  const cd = nextData?.props?.pageProps?.page?.customData;
+  if (!cd) return null;
+
+  // The store's own identity — from the calendar block, or the query slug.
+  const slug =
+    cd.restaurantCalendar?.restaurant?.slug ||
+    nextData?.props?.pageProps?.page?.customData?.restaurantDetails?.urlSlug ||
+    nextData?.query?.slug ||
+    null;
+
+  const flavors = new Map();
+  // Prefer the full calendar (a month of dates); fall back to the short
+  // "flavors" list on restaurantDetails if the calendar block is absent.
+  const cal = cd.restaurantCalendar?.flavors;
+  if (Array.isArray(cal)) {
+    for (const f of cal) {
+      if (f?.onDate && f?.title) flavors.set(f.onDate.slice(0, 10), f.title);
     }
   }
-  return null;
-}
-
-/* The city/state embedded IN the flavor data itself. Each calendar entry
-   carries LOCATION:undefined, <City>, <ST> <ZIP>. This travels with the
-   flavors, so it's the most reliable signal that the flavors we parsed
-   actually belong to the store we asked for — a stripped canonical tag
-   can't fool it. Returns e.g. "darboy, wi" (lowercased) or null. */
-function flavorDataCity(html) {
-  const re = /data:text\/calendar[^"'\)\s]+/g;
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    let ics;
-    try { ics = decodeURIComponent(m[0]); } catch { continue; }
-    const lm = /LOCATION:[^,\n]*,\s*([A-Za-z.'\- ]{2,40}),\s*([A-Z]{2})/.exec(ics);
-    if (lm) return (lm[1].trim() + ", " + lm[2]).toLowerCase();
+  if (flavors.size === 0 && Array.isArray(cd.restaurantDetails?.flavors)) {
+    for (const f of cd.restaurantDetails.flavors) {
+      if (f?.calendarDate && f?.name) flavors.set(f.calendarDate.slice(0, 10), f.name);
+    }
   }
-  return null;
+  return { slug, flavors };
 }
 
-/* Fetch a store's page and confirm the FLAVOR DATA belongs to that store,
-   retrying if the CDN/proxy serves a cached page for a different location.
-   Verification order: the LOCATION city inside the flavor data (strongest),
-   then the page's canonical slug. Pass the expected city from locations.json. */
-async function fetchStorePage(slug, expectCity, expectState) {
+/* Fetch a store's page and confirm — via the store's OWN slug inside
+   __NEXT_DATA__ — that we got the right location, retrying if a proxy/CDN
+   serves a cached page for a different store. Returns a flavor Map. */
+async function fetchStoreFlavors(slug) {
   const url = `https://www.culvers.com/restaurants/${slug}`;
-  const want = expectCity ? (expectCity + ", " + (expectState || "")).trim().toLowerCase() : null;
   let lastErr;
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const html = await fetchPage(url);
-      const dataCity = flavorDataCity(html);   // city inside the flavor data
-      const slugGot = pageSlug(html);          // canonical/og:url slug
-
-      // Accept if EITHER strong signal confirms the store:
-      //  - the flavor data's own city matches what we expected, or
-      //  - the page's canonical slug matches the slug we requested.
-      const cityOk = want && dataCity && dataCity === want;
-      const slugOk = slugGot && slugGot === slug;
-      if (cityOk || slugOk) return html;
-
-      // Accept if we simply have nothing to check against (avoid false
-      // rejects when both signals are absent — better a maybe-stale page
-      // than a blank card).
-      if (!dataCity && !slugGot) return html;
-      if (!want && slugGot === null) return html;
-
-      // Otherwise at least one signal says "different store" and nothing
-      // confirms it — treat as a cache mismatch and retry.
-      lastErr = new Error(
-        "wrong store" + (dataCity ? ` (got ${dataCity})` : slugGot ? ` (got ${slugGot})` : "")
-      );
+      const nd = parseNextData(html);
+      const store = nd && extractStore(nd);
+      if (store && store.slug === slug && store.flavors.size > 0) {
+        return store.flavors;               // verified: right store, has data
+      }
+      if (store && store.slug && store.slug !== slug) {
+        lastErr = new Error(`wrong store (${store.slug})`);
+      } else {
+        lastErr = new Error("no flavor data");
+      }
     } catch (e) {
       lastErr = e;
     }
     await new Promise((r) => setTimeout(r, 350 * (attempt + 1) + Math.random() * 400));
   }
   throw lastErr || new Error("fetch failed");
-}
-
-/* Cheap HTML entity decoder. */
-const decoder = document.createElement("textarea");
-function unescapeHtml(s) {
-  decoder.innerHTML = s;
-  return decoder.value;
-}
-
-/* Parse iCalendar payloads from a Culver's restaurant page.
-   Returns Map of yyyy-mm-dd -> flavor. */
-function parseFlavors(html) {
-  const out = new Map();
-  const re = /data:text\/calendar[^"'\)\s]+/g;
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    let ics;
-    try { ics = decodeURIComponent(m[0]); } catch { continue; }
-    const d = /DTSTART[^:]*:(\d{8})/.exec(ics);
-    const f = /SUMMARY:([^\r\n\\]+)/.exec(ics);
-    if (d && f) {
-      const iso = d[1].slice(0,4) + "-" + d[1].slice(4,6) + "-" + d[1].slice(6,8);
-      out.set(iso, unescapeHtml(f[1].trim()));
-    }
-  }
-  return out;
 }
 
 function todayIso() {
@@ -718,8 +684,8 @@ async function loadAndRender() {
   const jobs = targets.map(async (loc, i) => {
     if (i > 0) await new Promise((r) => setTimeout(r, i * 250));
     try {
-      const html = await fetchStorePage(loc.slug, loc.city, loc.state);
-      cache[loc.slug] = { flavors: parseFlavors(html), error: null };
+      const flavors = await fetchStoreFlavors(loc.slug);
+      cache[loc.slug] = { flavors, error: null };
     } catch (e) {
       cache[loc.slug] = { flavors: new Map(), error: e.message || String(e) };
     }
