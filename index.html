@@ -399,29 +399,24 @@
 <main id="results"></main>
 
 <p class="colophon">
-  Reads flavor data straight from culvers.com.<br>
-  Location list generated from culvers.com sitemap.
+  Reads today's flavor straight from culvers.com.
 </p>
 
 <script>
 /* ============================================================
-   Location data — loaded from locations.json at startup.
-   Generate the file by running build_locations.py once (~1000
-   stores, ~15 min). Then commit locations.json alongside this
-   file so GitHub Pages serves both from the same origin.
-   ============================================================ */
-let LOCATIONS = [];
-const MAX_FLAVOR_FETCHES = 10;  // most stores we'll fetch flavors for at once
+   Flavor Finder — powered by Culver's public locator endpoint.
 
-/* Data source:
-   - If this page is served by flavor_server.py (i.e. http(s)://), we call
-     its /api/flavors endpoint directly — no CORS proxy needed.
-   - If opened as a file:// or hosted on a server that doesn't run the API,
-     we fall back to public CORS proxies. The local API path is preferred
-     because it's faster, cached, and not subject to third-party rate limits.
-*/
-const USE_LOCAL_API = location.protocol === "http:" || location.protocol === "https:";
-const LOCAL_API = "/api/flavors";
+   One GET to /api/locator/getLocations returns every nearby store
+   with its address, coordinates, slug, and TODAY'S flavor — all in
+   a single request. No location file to maintain, no per-store page
+   scraping, always current nationwide. Because it's on culvers.com,
+   the browser can't call it directly (CORS), so we route through a
+   public CORS proxy — but it's just one request per search.
+   ============================================================ */
+
+const LOCATOR = "https://www.culvers.com/api/locator/getLocations";
+const MILES_TO_METERS = 1609.34;
+
 const PROXIES = [
   (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
   (u) => "https://corsproxy.io/?url=" + encodeURIComponent(u),
@@ -439,38 +434,33 @@ const statusEl   = $("status");
 const statusText = $("statusText");
 const results    = $("results");
 
-let userLoc = null;
+let userLoc = null;      // {lat, lng}
+let lastStores = [];     // most recent locator results (already sorted by distance)
 
-// A debounce timer for radius changes. Dragging the slider re-renders
-// instantly from cache, then fetches any newly in-range stores once the
-// slider settles (so widening the radius fills in their flavors instead of
-// leaving them stuck on "No flavor listed for today").
-let radiusFetchTimer = null;
+// Re-render on control changes. The radius and keyword both only affect
+// what we SHOW from the last fetch — widening the radius refetches (the
+// locator is capped by radius), so radius triggers a debounced refetch.
+let radiusTimer = null;
 distSlider.addEventListener("input", () => {
   distLabel.textContent = distSlider.value;
   if (!userLoc) return;
-  render();  // immediate visual feedback
-  clearTimeout(radiusFetchTimer);
-  radiusFetchTimer = setTimeout(() => loadAndRender(), 400);
+  render();  // instant feedback from cached results
+  clearTimeout(radiusTimer);
+  radiusTimer = setTimeout(fetchAndRender, 400);
 });
 favInput.addEventListener("input", () => {
   favHint.textContent = favInput.value.trim() || "—";
-  if (userLoc) render();  // keyword only re-highlights cached data; no fetch needed
+  render();
 });
 goBtn.addEventListener("click", locate);
-refreshBtn.addEventListener("click", () => { if (userLoc) loadAndRender(); });
+refreshBtn.addEventListener("click", () => { if (userLoc) fetchAndRender(); });
 
-// Manual location entry: accepts a 5-digit ZIP (geocoded via zippopotam.us)
-// or raw "lat, lng" coordinates as a power-user fallback.
-$("manualInput").addEventListener("change", (e) => {
-  resolveManual(e.target.value);
-});
+// Manual location entry: 5-digit ZIP (geocoded) or raw "lat, lng".
+$("manualInput").addEventListener("change", (e) => resolveManual(e.target.value));
 
 async function resolveManual(raw) {
   const v = String(raw).trim();
   if (!v) return;
-
-  // 5-digit US ZIP code: look it up.
   if (/^\d{5}$/.test(v)) {
     try {
       setStatus(`Looking up ZIP ${v}…`, "busy");
@@ -479,35 +469,24 @@ async function resolveManual(raw) {
       const data = await r.json();
       const p = data.places && data.places[0];
       if (!p) throw new Error("no location data");
-      const label = `${p["place name"]}, ${p["state abbreviation"]} ${v}`;
-      setManualLoc(parseFloat(p.latitude), parseFloat(p.longitude), label);
+      setLoc(parseFloat(p.latitude), parseFloat(p.longitude),
+             `${p["place name"]}, ${p["state abbreviation"]} ${v}`);
     } catch (e) {
       setStatus(`Couldn't look up ZIP ${v}: ${e.message}`, "err");
     }
     return;
   }
-
-  // "lat, lng" fallback.
   const m = v.match(/(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)/);
-  if (m) {
-    setManualLoc(parseFloat(m[1]), parseFloat(m[3]), "manual coords");
-    return;
-  }
-
+  if (m) { setLoc(parseFloat(m[1]), parseFloat(m[3]), "manual coords"); return; }
   setStatus("Enter a 5-digit ZIP code (or 'lat, lng' coordinates).", "err");
 }
 
-function setManualLoc(lat, lng, label) {
+function setLoc(lat, lng, label) {
   userLoc = { lat, lng };
   goBtn.textContent = "Update location";
   refreshBtn.disabled = false;
   setStatus(`Using ${label} as your location.`, "ok");
-  loadAndRender();
-}
-
-function setStatus(text, kind) {
-  statusText.textContent = text;
-  statusEl.className = "status" + (kind ? " " + kind : "");
+  fetchAndRender();
 }
 
 function locate() {
@@ -519,230 +498,88 @@ function locate() {
   goBtn.disabled = true;
   navigator.geolocation.getCurrentPosition(
     (pos) => {
-      userLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      goBtn.textContent = "Update location";
       goBtn.disabled = false;
-      refreshBtn.disabled = false;
-      loadAndRender();
+      setLoc(pos.coords.latitude, pos.coords.longitude, "your location");
     },
     (err) => {
       goBtn.disabled = false;
-      const policyBlocked = /permissions policy|disabled/i.test(err.message);
-      const note = policyBlocked
-        ? "Geolocation is blocked here. Open 'Set location manually' below, or open the page in a real browser tab."
-        : "Location denied or unavailable: " + err.message + ". Try the manual option below.";
-      setStatus(note, "err");
+      const blocked = /permissions policy|disabled/i.test(err.message);
+      setStatus(blocked
+        ? "Geolocation is blocked here. Use 'Set location manually' below, or open the page in a real browser tab."
+        : "Location denied or unavailable: " + err.message + ". Try the manual option below.", "err");
     },
     { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
   );
 }
 
-/* Haversine — miles. */
 function distanceMiles(a, b) {
-  const R = 3958.8;
-  const toRad = (d) => d * Math.PI / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
+  const R = 3958.8, toRad = (d) => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
   const lat1 = toRad(a.lat), lat2 = toRad(b.lat);
   const h = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-/* Try each proxy in order, adding a cache-buster so the proxy/CDN can't hand
-   back a copy of a different store's page. Returns the page HTML. */
-async function fetchPage(url) {
+// Fetch through the first proxy that works.
+async function proxiedJson(url) {
   let lastErr;
   for (const wrap of PROXIES) {
     try {
-      const bust = (url.includes("?") ? "&" : "?") + "_cb=" + Date.now() + "_" + Math.random().toString(36).slice(2);
+      const bust = (url.includes("?") ? "&" : "?") + "_cb=" + Date.now();
       const r = await fetch(wrap(url + bust), { cache: "no-store" });
       if (!r.ok) throw new Error("HTTP " + r.status);
-      return await r.text();
+      const text = await r.text();
+      return JSON.parse(text);
     } catch (e) { lastErr = e; }
   }
   throw lastErr;
 }
 
-/* Extract the __NEXT_DATA__ JSON blob the site embeds on every restaurant
-   page. It carries the store's own slug plus a full month of flavors keyed
-   by date — a far cleaner source than scraping the calendar HTML. */
-function parseNextData(html) {
-  const m = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
-  if (!m) return null;
-  try { return JSON.parse(m[1]); } catch { return null; }
-}
+// Query the locator for stores near userLoc within the current radius.
+async function fetchAndRender() {
+  if (!userLoc) return;
+  const miles = +distSlider.value;
+  const meters = Math.round(miles * MILES_TO_METERS);
+  const url = `${LOCATOR}?lat=${userLoc.lat}&long=${userLoc.lng}&radius=${meters}&limit=100&layer=`;
 
-/* Pull what we need out of the parsed __NEXT_DATA__:
-   - slug: the store's OWN url slug (used to verify we got the right page)
-   - flavors: Map of yyyy-mm-dd -> flavor name (today + the coming weeks) */
-function extractStore(nextData) {
-  const cd = nextData?.props?.pageProps?.page?.customData;
-  if (!cd) return null;
+  setStatus("Finding nearby Culver's…", "busy");
+  try {
+    const data = await proxiedJson(url);
+    const fences = data?.data?.geofences || [];
+    lastStores = fences.map((g) => {
+      const m = g.metadata || {};
+      const c = g.geometryCenter?.coordinates || [null, null];
+      const lat = c[1], lng = c[0];
+      return {
+        slug: m.slug,
+        city: m.city || "",
+        state: m.state || "",
+        addr: m.street || "",
+        today: m.flavorOfDayName || null,
+        closed: m.isTemporarilyClosed === true,
+        lat, lng,
+        miles: (lat != null && lng != null) ? distanceMiles(userLoc, { lat, lng }) : Infinity,
+      };
+    }).sort((a, b) => a.miles - b.miles);
 
-  // The store's own identity — from the calendar block, or the query slug.
-  const slug =
-    cd.restaurantCalendar?.restaurant?.slug ||
-    nextData?.props?.pageProps?.page?.customData?.restaurantDetails?.urlSlug ||
-    nextData?.query?.slug ||
-    null;
-
-  const flavors = new Map();
-  // Prefer the full calendar (a month of dates); fall back to the short
-  // "flavors" list on restaurantDetails if the calendar block is absent.
-  const cal = cd.restaurantCalendar?.flavors;
-  if (Array.isArray(cal)) {
-    for (const f of cal) {
-      if (f?.onDate && f?.title) flavors.set(f.onDate.slice(0, 10), f.title);
-    }
-  }
-  if (flavors.size === 0 && Array.isArray(cd.restaurantDetails?.flavors)) {
-    for (const f of cd.restaurantDetails.flavors) {
-      if (f?.calendarDate && f?.name) flavors.set(f.calendarDate.slice(0, 10), f.name);
-    }
-  }
-  return { slug, flavors };
-}
-
-/* Fetch a store's page and confirm — via the store's OWN slug inside
-   __NEXT_DATA__ — that we got the right location, retrying if a proxy/CDN
-   serves a cached page for a different store. Returns a flavor Map. */
-async function fetchStoreFlavors(slug) {
-  const url = `https://www.culvers.com/restaurants/${slug}`;
-  let lastErr;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      const html = await fetchPage(url);
-      const nd = parseNextData(html);
-      const store = nd && extractStore(nd);
-      if (store && store.slug === slug && store.flavors.size > 0) {
-        return store.flavors;               // verified: right store, has data
-      }
-      if (store && store.slug && store.slug !== slug) {
-        lastErr = new Error(`wrong store (${store.slug})`);
-      } else {
-        lastErr = new Error("no flavor data");
-      }
-    } catch (e) {
-      lastErr = e;
-    }
-    await new Promise((r) => setTimeout(r, 350 * (attempt + 1) + Math.random() * 400));
-  }
-  throw lastErr || new Error("fetch failed");
-}
-
-function todayIso() {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
-}
-function dayLabel(iso) {
-  const [y,m,d] = iso.split("-").map(Number);
-  const dt = new Date(y, m-1, d);
-  return dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-}
-
-let cache = {};   // slug -> {flavors: Map<iso, name>, error}
-
-async function loadAndRender() {
-  setStatus("Fetching today's flavors…", "busy");
-
-  if (USE_LOCAL_API) {
-    // Single API call to the local server — fast, no third-party proxy.
-    try {
-      cache = {};
-      const r = await fetch(LOCAL_API, { cache: "no-store" });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const data = await r.json();
-      for (const loc of data.locations) {
-        const m = new Map();
-        if (loc.today) {
-          m.set(todayIso(), loc.today);
-        }
-        for (const w of (loc.week || [])) m.set(w.date, w.flavor);
-        cache[loc.slug] = { flavors: m, error: loc.error || null };
-      }
-      const succeeded = Object.values(cache).filter(d => !d.error).length;
-      if (succeeded === 0) {
-        setStatus("Local server reachable, but no locations could be fetched. Check the server console for errors.", "err");
-      } else {
-        const t = new Date(data.fetched_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-        const partial = succeeded < data.locations.length ? ` (${succeeded}/${data.locations.length} reachable)` : "";
-        setStatus(`Updated ${t}${partial}`, "ok");
-      }
-      render();
-      return;
-    } catch (e) {
-      // Local API not present (e.g. hosted on GitHub Pages with no backend).
-      // Fall through to proxies silently; keep the "Fetching…" spinner.
-    }
-  }
-
-  // Proxy fallback: fetch flavors for the closest N stores in the current
-  // radius. We KEEP the existing cache (so widening the radius doesn't
-  // re-fetch stores we already have) and only fetch the in-range stores
-  // that aren't cached yet, up to the cap.
-  const maxMi = +distSlider.value;
-  const inRange = userLoc
-    ? LOCATIONS
-        .map((loc) => ({ ...loc, miles: distanceMiles(userLoc, loc) }))
-        .filter((r) => r.miles <= maxMi)
-        .sort((a, b) => a.miles - b.miles)
-        .slice(0, MAX_FLAVOR_FETCHES)
-    : [];
-  const targets = inRange.filter((loc) => !cache[loc.slug] || cache[loc.slug].error);
-
-  const jobs = targets.map(async (loc, i) => {
-    if (i > 0) await new Promise((r) => setTimeout(r, i * 250));
-    try {
-      const flavors = await fetchStoreFlavors(loc.slug);
-      cache[loc.slug] = { flavors, error: null };
-    } catch (e) {
-      cache[loc.slug] = { flavors: new Map(), error: e.message || String(e) };
-    }
-  });
-  await Promise.all(jobs);
-
-  // Count successes among the stores actually shown (the in-range set).
-  const shownOk = inRange.filter((loc) => cache[loc.slug] && !cache[loc.slug].error).length;
-  if (inRange.length === 0) {
-    // No stores in range — render() will show the empty state.
-    setStatus("Ready.", "");
+    const t = new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    setStatus(`Updated ${t} — ${lastStores.length} within ${miles} mi`, "ok");
     render();
-    return;
+  } catch (e) {
+    setStatus("Couldn't reach Culver's locator through any proxy. Try again in a minute.", "err");
   }
-  if (shownOk === 0) {
-    setStatus(
-      "Couldn't reach culvers.com through any proxy. Try again in a minute.",
-      "err"
-    );
-    render();
-    return;
-  }
-  const now = new Date();
-  const t = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  const partial = shownOk < inRange.length ? ` (${shownOk}/${inRange.length} reachable)` : "";
-  setStatus(`Updated ${t}${partial}`, "ok");
-  render();
 }
 
 function render() {
   if (!userLoc) return;
   const maxMi = +distSlider.value;
   const fav = favInput.value.trim().toLowerCase();
-  const today = todayIso();
 
-  // Compute distances, filter to radius, sort nearest first, and cap the
-  // number of stores we'll actually fetch flavors for. Anything beyond the
-  // cap is shown in a small "and N more nearby" line below the cards.
-  const inRange = LOCATIONS
-    .map((loc) => ({ ...loc, miles: distanceMiles(userLoc, loc) }))
-    .filter((r) => r.miles <= maxMi)
-    .sort((a, b) => a.miles - b.miles);
-  const rows = inRange.slice(0, MAX_FLAVOR_FETCHES);
-  const extras = inRange.slice(MAX_FLAVOR_FETCHES);
+  // Filter to radius (the locator is radius-bounded, but re-filter in case
+  // the slider narrowed since the last fetch), already distance-sorted.
+  const rows = lastStores.filter((s) => s.miles <= maxMi);
 
   results.innerHTML = "";
-
   if (rows.length === 0) {
     const div = document.createElement("div");
     div.className = "empty";
@@ -752,96 +589,47 @@ function render() {
   }
 
   for (const r of rows) {
-    const data = cache[r.slug] || {};
-    const flavors = data.flavors || new Map();
-    const todayFlavor = flavors.get(today);
-    const upcoming = [...flavors.entries()]
-      .filter(([iso]) => iso > today)
-      .sort()
-      .slice(0, 6);
-
     const card = document.createElement("article");
     card.className = "card";
 
+    const isMatch = fav && r.today && r.today.toLowerCase().includes(fav);
     let alertHtml = "";
-    const isMatch = fav && todayFlavor && todayFlavor.toLowerCase().includes(fav);
     if (isMatch) {
       card.classList.add("match");
       alertHtml = `<div class="alert">★ ${escapeHtml(fav)} is on today</div>`;
     }
 
-    if (data.error) {
-      card.classList.add("err");
-    }
-
-    const flavorHtml = data.error
-      ? `<p class="flavor">⚠ ${escapeHtml(data.error)}</p>`
-      : todayFlavor
-        ? `<p class="flavor">${escapeHtml(todayFlavor)}</p>`
+    const flavorHtml = r.closed
+      ? `<p class="flavor unknown">Temporarily closed</p>`
+      : r.today
+        ? `<p class="flavor">${escapeHtml(r.today)}</p>`
         : `<p class="flavor unknown">No flavor listed for today.</p>`;
 
-    let weekHtml = "";
-    if (upcoming.length) {
-      weekHtml = `<div class="week">` + upcoming.map(([iso, name]) => {
-        const matchClass = fav && name.toLowerCase().includes(fav) ? " fav" : "";
-        return `<div class="week-row${matchClass}"><span class="d">${dayLabel(iso)}</span><span>${escapeHtml(name)}</span></div>`;
-      }).join("") + `</div>`;
-    }
-
-    const placeHeader = escapeHtml(r.city) + (r.state ? ", " + escapeHtml(r.state) : "");
-    const addrHtml = r.addr ? `<span class="addr">${escapeHtml(r.addr)}</span>` : "";
+    const place = escapeHtml(r.city) + (r.state ? ", " + escapeHtml(r.state) : "");
+    const addr = r.addr ? `<span class="addr">${escapeHtml(r.addr)}</span>` : "";
 
     card.innerHTML = `
       ${alertHtml}
       <div class="card-head">
-        <p class="place">${placeHeader}${addrHtml}</p>
+        <p class="place">${place}${addr}</p>
         <span class="distance">${r.miles.toFixed(1)} mi</span>
       </div>
       ${flavorHtml}
-      ${weekHtml}
     `;
     results.appendChild(card);
-  }
-
-  // Note additional stores that were in-range but past the fetch cap.
-  if (extras.length) {
-    const div = document.createElement("div");
-    div.className = "empty";
-    div.style.padding = "16px 24px 8px";
-    div.innerHTML = `<p style="font-size:12px">…and ${extras.length} more within ${maxMi} miles. Narrow the radius to see them.</p>`;
-    results.appendChild(div);
   }
 }
 
 function escapeHtml(s) {
   return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-// Set initial label.
+// Initial labels.
 distLabel.textContent = distSlider.value;
 favHint.textContent = favInput.value;
-
-// Load the location list. Once it's ready, the "Use my location" button
-// works normally. If it fails, tell the user what to do.
-(async function loadLocationList() {
-  setStatus("Loading location list…", "busy");
-  goBtn.disabled = true;
-  try {
-    const r = await fetch("locations.json", { cache: "no-store" });
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    LOCATIONS = await r.json();
-    setStatus(`Ready — ${LOCATIONS.length.toLocaleString()} locations loaded. Tap "Use my location" or set one manually.`, "");
-  } catch (e) {
-    setStatus("Couldn't load locations.json — the file needs to be deployed alongside this page.", "err");
-  } finally {
-    goBtn.disabled = false;
-  }
-})();
+setStatus('Tap "Use my location" or enter a ZIP to begin.', "");
 </script>
 </body>
 </html>
